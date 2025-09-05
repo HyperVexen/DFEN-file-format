@@ -1,0 +1,5 @@
+{
+  "name": "DFN AI Web Editor",
+  "description": "A sophisticated web-based editor for the DFN (Digital Fiction Narrative) format, featuring a real-time split-view renderer, formatting tools, and AI-powered font pairing suggestions to enhance the writing experience.",
+  "requestFramePermissions": []
+}
