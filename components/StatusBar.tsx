@@ -1,12 +1,14 @@
 
+
 import React from 'react';
 import type { Novel } from '../types';
 
 interface StatusBarProps {
     novel: Novel;
+    saveStatus: 'idle' | 'saving' | 'saved';
 }
 
-const StatusBar: React.FC<StatusBarProps> = ({ novel }) => {
+const StatusBar: React.FC<StatusBarProps> = ({ novel, saveStatus }) => {
     const totalChapters = novel.slides.length;
     const totalWordCount = novel.slides.reduce((acc, chapter) => {
         const chapterWords = chapter.content.split(/\s+/).filter(Boolean).length;
@@ -15,6 +17,17 @@ const StatusBar: React.FC<StatusBarProps> = ({ novel }) => {
         return acc + chapterWords + extractsWords;
     }, 0);
 
+    const getStatusText = () => {
+        switch (saveStatus) {
+            case 'saving':
+                return 'Saving...';
+            case 'saved':
+                return 'All changes saved';
+            case 'idle':
+            default:
+                return '';
+        }
+    };
 
   return (
     <div className="bg-black border-t border-white/20 px-4 py-1 flex justify-between items-center text-xs text-white/70">
@@ -22,7 +35,10 @@ const StatusBar: React.FC<StatusBarProps> = ({ novel }) => {
         <span>Chapters: {totalChapters}</span>
         <span>Total Words: {totalWordCount}</span>
       </div>
-      <div>
+      <div className="flex items-center space-x-4">
+        <span className="transition-opacity duration-300 min-w-[120px] text-right">
+            {getStatusText()}
+        </span>
         <span>DFN Editor v1.0</span>
       </div>
     </div>

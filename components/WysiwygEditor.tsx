@@ -41,6 +41,8 @@ const dfnToHtml = (text: string): string => {
     return result;
 };
 
+const HIGHLIGHT_TAG = 'MARK';
+
 // --- HTML to DFN Conversion ---
 const htmlToDfn = (node: Node): string => {
     if (node.nodeType === Node.TEXT_NODE) {
@@ -49,6 +51,12 @@ const htmlToDfn = (node: Node): string => {
 
     if (node.nodeType === Node.ELEMENT_NODE) {
         const el = node as HTMLElement;
+        
+        // Ignore our highlight tag
+        if (el.nodeName === HIGHLIGHT_TAG) {
+            return Array.from(el.childNodes).map(child => htmlToDfn(child)).join('');
+        }
+
         let childrenDfn = Array.from(el.childNodes).map(child => htmlToDfn(child)).join('');
 
         // The <font> tag is deprecated and used by execCommand, handle it specifically.
@@ -97,9 +105,10 @@ interface WysiwygEditorProps {
   dfnContent: string;
   onDfnContentChange: (newContent: string) => void;
   onSelectionChange: (formats: { [key: string]: string | boolean }) => void;
+  highlightInfo: { query: string; occurrenceIndex: number } | null;
 }
 
-const WysiwygEditor: React.FC<WysiwygEditorProps> = ({ dfnContent, onDfnContentChange, onSelectionChange }) => {
+const WysiwygEditor: React.FC<WysiwygEditorProps> = ({ dfnContent, onDfnContentChange, onSelectionChange, highlightInfo }) => {
     const editorRef = useRef<HTMLDivElement>(null);
     const lastDfnContent = useRef(dfnContent);
     const isUpdatingFromOutside = useRef(false);
@@ -132,6 +141,21 @@ const WysiwygEditor: React.FC<WysiwygEditorProps> = ({ dfnContent, onDfnContentC
         }
         onSelectionChange(formats);
     }, [onSelectionChange]);
+    
+    const removeHighlights = useCallback(() => {
+        if (!editorRef.current) return;
+        const highlights = editorRef.current.querySelectorAll(HIGHLIGHT_TAG);
+        highlights.forEach(node => {
+            const parent = node.parentNode;
+            if (parent) {
+                while (node.firstChild) {
+                    parent.insertBefore(node.firstChild, node);
+                }
+                parent.removeChild(node);
+                parent.normalize(); // Merges adjacent text nodes
+            }
+        });
+    }, []);
 
     useEffect(() => {
         const handler = () => {
@@ -164,6 +188,61 @@ const WysiwygEditor: React.FC<WysiwygEditorProps> = ({ dfnContent, onDfnContentC
             }, 0);
         }
     }, [dfnContent]);
+
+    useEffect(() => {
+        removeHighlights();
+        if (!highlightInfo || !editorRef.current) return;
+        
+        const { query, occurrenceIndex } = highlightInfo;
+        const walker = document.createTreeWalker(editorRef.current, NodeFilter.SHOW_TEXT, null);
+        let currentNode;
+        let textContent = '';
+        const textNodes: {node: Node, start: number}[] = [];
+
+        while(currentNode = walker.nextNode()) {
+            textNodes.push({node: currentNode, start: textContent.length});
+            textContent += currentNode.textContent || '';
+        }
+        
+        const queryLower = query.toLowerCase();
+        const contentLower = textContent.toLowerCase();
+        let matchIndex = -1;
+        let currentOccurrence = -1;
+        
+        do {
+            matchIndex = contentLower.indexOf(queryLower, matchIndex + 1);
+            if (matchIndex !== -1) {
+                currentOccurrence++;
+            }
+        } while (currentOccurrence < occurrenceIndex && matchIndex !== -1)
+        
+        if (matchIndex === -1) return;
+        
+        const matchEnd = matchIndex + query.length;
+        const range = document.createRange();
+        let started = false;
+        
+        for (const { node, start } of textNodes) {
+            const end = start + (node.textContent?.length || 0);
+            if (matchEnd > start && matchIndex < end) {
+                const rangeStart = Math.max(start, matchIndex);
+                const rangeEnd = Math.min(end, matchEnd);
+
+                if (!started) {
+                    range.setStart(node, rangeStart - start);
+                    started = true;
+                }
+                
+                if (rangeEnd <= end) {
+                    range.setEnd(node, rangeEnd - start);
+                    const mark = document.createElement(HIGHLIGHT_TAG);
+                    range.surroundContents(mark);
+                    mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    break;
+                }
+            }
+        }
+    }, [highlightInfo, removeHighlights, dfnContent]);
 
     const handleInput = () => {
         if (isUpdatingFromOutside.current) return;

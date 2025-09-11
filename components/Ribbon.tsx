@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { PanelLeftIcon, PanelRightIcon, CodeIcon, BoldIcon, ItalicIcon, UnderlineIcon, StrikethroughIcon, TextColorIcon, ChevronDownIcon } from './icons';
+import { PanelLeftIcon, PanelRightIcon, CodeIcon, BoldIcon, ItalicIcon, UnderlineIcon, StrikethroughIcon, TextColorIcon, ChevronDownIcon, SearchIcon } from './icons';
 import Tooltip from './Tooltip';
 
 interface RibbonProps {
@@ -12,6 +12,7 @@ interface RibbonProps {
     onFormat: (command: string, value?: string) => void;
     onImport: () => void;
     onExport: () => void;
+    onToggleFind: () => void;
     activeFormats: { [key: string]: string | boolean };
 }
 
@@ -25,6 +26,7 @@ const Ribbon: React.FC<RibbonProps> = ({
     onFormat,
     onImport,
     onExport,
+    onToggleFind,
     activeFormats
 }) => {
   const [isFileMenuOpen, setIsFileMenuOpen] = useState(false);
@@ -137,6 +139,11 @@ const Ribbon: React.FC<RibbonProps> = ({
 
       {/* Right side: View toggles */}
       <div className="flex items-center space-x-4">
+        <Tooltip content="Find & Replace (Ctrl+F)">
+            <button onClick={onToggleFind} className={`p-2 rounded-md text-white/70 hover:text-white hover:bg-white/10`}>
+                <SearchIcon className="w-5 h-5"/>
+            </button>
+        </Tooltip>
         <Tooltip content={isCodeView ? "Visual Editor" : "Code Editor"}>
             <button onClick={onToggleCodeView} className={`p-2 rounded-md ${isCodeView ? 'bg-white/20 text-white' : 'text-white/70 hover:text-white hover:bg-white/10'}`}>
                 <CodeIcon className="w-5 h-5"/>

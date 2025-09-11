@@ -94,3 +94,23 @@ export const ChevronRightIcon: React.FC<{ open?: boolean; className?: string }> 
         <path d="m9 18 6-6-6-6" />
     </SVGIcon>
 );
+
+export const CloseIcon: React.FC<{ className?: string }> = ({ className }) => (
+    <SVGIcon className={className}>
+        <line x1="18" y1="6" x2="6" y2="18" />
+        <line x1="6" y1="6" x2="18" y2="18" />
+    </SVGIcon>
+);
+
+export const ChevronUpIcon: React.FC<{ className?: string }> = ({ className }) => (
+    <SVGIcon className={className}>
+        <path d="m18 15-6-6-6 6" />
+    </SVGIcon>
+);
+
+export const SearchIcon: React.FC<{ className?: string }> = ({ className }) => (
+    <SVGIcon className={className}>
+        <circle cx="11" cy="11" r="8" />
+        <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </SVGIcon>
+);

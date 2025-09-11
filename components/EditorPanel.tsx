@@ -9,9 +9,20 @@ interface EditorPanelProps {
   editorRef: React.RefObject<HTMLTextAreaElement>;
   isCodeView: boolean;
   onSelectionChange: (formats: { [key: string]: string | boolean }) => void;
+  codeHighlightRange: { start: number; end: number } | null;
+  wysiwygHighlight: { query: string; occurrenceIndex: number } | null;
 }
 
-const EditorPanel: React.FC<EditorPanelProps> = ({ activeSlide, onContentChange, onTitleChange, editorRef, isCodeView, onSelectionChange }) => {
+const EditorPanel: React.FC<EditorPanelProps> = ({ 
+  activeSlide, 
+  onContentChange, 
+  onTitleChange, 
+  editorRef, 
+  isCodeView, 
+  onSelectionChange,
+  codeHighlightRange,
+  wysiwygHighlight
+}) => {
 
   useEffect(() => {
     if (isCodeView && editorRef.current) {
@@ -19,6 +30,25 @@ const EditorPanel: React.FC<EditorPanelProps> = ({ activeSlide, onContentChange,
         editorRef.current.style.height = `${editorRef.current.scrollHeight}px`;
     }
   }, [activeSlide, isCodeView, editorRef]);
+
+  useEffect(() => {
+    if (isCodeView && editorRef.current && codeHighlightRange) {
+        const textarea = editorRef.current;
+        textarea.focus();
+        textarea.setSelectionRange(codeHighlightRange.start, codeHighlightRange.end);
+        
+        // Scroll into view logic
+        const { selectionStart } = textarea;
+        const text = textarea.value;
+        const textBefore = text.substring(0, selectionStart);
+        const lines = textBefore.split('\n').length;
+        const lineHeight = parseFloat(getComputedStyle(textarea).lineHeight) || 20; // fallback
+        
+        // Center it a bit
+        const desiredScrollTop = (lines - 1) * lineHeight - textarea.clientHeight / 2 + lineHeight / 2;
+        textarea.scrollTop = Math.max(0, desiredScrollTop);
+    }
+  }, [codeHighlightRange, isCodeView]);
 
   if (!activeSlide) {
     return (
@@ -50,6 +80,7 @@ const EditorPanel: React.FC<EditorPanelProps> = ({ activeSlide, onContentChange,
                     dfnContent={activeSlide.content}
                     onDfnContentChange={onContentChange}
                     onSelectionChange={onSelectionChange}
+                    highlightInfo={isCodeView ? null : wysiwygHighlight}
                 />
             )}
         </div>

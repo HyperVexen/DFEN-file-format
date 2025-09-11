@@ -7,6 +7,7 @@ import EditorPanel from './components/EditorPanel';
 import PropertiesPanel from './components/PropertiesPanel';
 import StatusBar from './components/StatusBar';
 import ContextMenu, { ContextMenuItem } from './components/ContextMenu';
+import FindReplacePanel from './components/FindReplacePanel';
 
 // --- Utility Functions ---
 const generateId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
@@ -59,24 +60,54 @@ const novelToDfn = (novel: Novel): string => {
     return dfnString.trim();
 };
 
+const loadInitialNovel = (): Novel => {
+    try {
+        const savedData = localStorage.getItem('dfn-novel-autosave');
+        if (savedData) {
+            const savedNovel = JSON.parse(savedData);
+            if (savedNovel && typeof savedNovel.title === 'string' && Array.isArray(savedNovel.slides)) {
+                return savedNovel;
+            }
+        }
+    } catch (error) {
+        console.error("Failed to load novel from localStorage:", error);
+    }
+    return INITIAL_NOVEL;
+};
+
+type SearchResult = {
+  slideId: string;
+  start: number;
+  end: number;
+};
+
+const initialNovelData = loadInitialNovel();
 
 const App: React.FC = () => {
-  const [history, setHistory] = useState<Novel[]>([INITIAL_NOVEL]);
+  const [history, setHistory] = useState<Novel[]>([initialNovelData]);
   const [historyIndex, setHistoryIndex] = useState(0);
   
   const novel = history[historyIndex];
   const canUndo = historyIndex > 0;
   const canRedo = historyIndex < history.length - 1;
 
-  const [activeSlideId, setActiveSlideId] = useState<string | null>(INITIAL_NOVEL.slides[0]?.id || null);
+  const [activeSlideId, setActiveSlideId] = useState<string | null>(initialNovelData.slides[0]?.id || null);
   const [isNavOpen, setIsNavOpen] = useState(true);
   const [isPropertiesOpen, setIsPropertiesOpen] = useState(true);
   const [isCodeView, setIsCodeView] = useState(false);
   const [activeFormats, setActiveFormats] = useState<{ [key: string]: string | boolean }>({});
   const [clipboard, setClipboard] = useState<Slide | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; slideId: string | null; show: boolean }>({ x: 0, y: 0, slideId: null, show: false });
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>(() => localStorage.getItem('dfn-novel-autosave') ? 'saved' : 'idle');
+  
+  // Find & Replace State
+  const [isFindOpen, setIsFindOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [currentMatchIndex, setCurrentMatchIndex] = useState(-1);
 
   const editorRef = useRef<HTMLTextAreaElement>(null);
+  const saveTimeoutRef = useRef<number | null>(null);
 
   const commitChange = useCallback((newNovel: Novel) => {
     const currentNovel = history[historyIndex];
@@ -183,7 +214,7 @@ const App: React.FC = () => {
   const handleCutSlide = useCallback((slideId: string) => {
       handleCopySlide(slideId);
       handleDeleteSlide(slideId);
-  }, [novel, handleDeleteSlide]);
+  }, [handleDeleteSlide]);
 
   const handlePasteSlide = useCallback((targetSlideId: string | null) => {
     if (!clipboard) return;
@@ -242,85 +273,42 @@ const App: React.FC = () => {
         const textarea = editorRef.current;
         const start = textarea.selectionStart;
         const end = textarea.selectionEnd;
-        if (start === end && command !== 'fontSize' && command !== 'foreColor') return; // Allow applying color/size to cursor
+        if (start === end && command !== 'fontSize' && command !== 'foreColor') return;
 
         const selectedText = textarea.value.substring(start, end);
         let newText;
 
-        const commandToTag: { [key: string]: string } = {
-            bold: 'b',
-            italic: 'i',
-            underline: 'u',
-            strikeThrough: 's',
-        };
+        const commandToTag: { [key: string]: string } = { bold: 'b', italic: 'i', underline: 'u', strikeThrough: 's' };
         const tag = commandToTag[command];
 
-        if (tag) {
-            newText = `[${tag}]${selectedText}[/${tag}]`;
-        } else if (command === 'foreColor' && value) {
-            newText = `[color=${value}]${selectedText}[/color]`;
-        } else if (command === 'fontSize' && value) {
-            newText = `[size=${value}]${selectedText}[/size]`;
-        } else {
-            return;
-        }
+        if (tag) newText = `[${tag}]${selectedText}[/${tag}]`;
+        else if (command === 'foreColor' && value) newText = `[color=${value}]${selectedText}[/color]`;
+        else if (command === 'fontSize' && value) newText = `[size=${value}]${selectedText}[/size]`;
+        else return;
 
         const newContent = textarea.value.substring(0, start) + newText + textarea.value.substring(end);
         updateSlide(activeSlideId, { content: newContent });
 
-        // After state update, re-focus and set selection
         setTimeout(() => {
             if (editorRef.current) {
                 editorRef.current.focus();
-                // If there was no selection, place cursor in the middle of the new tags
                 const newCursorPos = start === end ? start + newText.indexOf(']') + 1 : start + newText.length;
                 editorRef.current.setSelectionRange(newCursorPos, newCursorPos);
             }
         }, 0);
 
     } else { // WYSIWYG
-        const simpleCommands = ['bold', 'italic', 'underline', 'strikeThrough', 'foreColor'];
-        if (simpleCommands.includes(command)) {
+        if (['bold', 'italic', 'underline', 'strikeThrough', 'foreColor'].includes(command)) {
             document.execCommand(command, false, value);
         } else if (command === 'fontSize' && value) {
-            // execCommand for fontSize is unreliable (1-7 scale).
-            // A common robust method is to wrap selection in a span.
             const selection = window.getSelection();
-            if (selection && selection.rangeCount > 0) {
+            if (selection?.rangeCount) {
                 const range = selection.getRangeAt(0);
                 const span = document.createElement('span');
                 span.style.fontSize = `${value}px`;
-                
-                if (range.collapsed) {
-                    // If no text is selected, insert the span and place cursor inside
-                    range.insertNode(span);
-                    // Add a zero-width space to be able to type inside
-                    span.appendChild(document.createTextNode('\u200B')); 
-                    range.selectNodeContents(span);
-                    selection.collapseToEnd();
-                } else {
-                    try {
-                        range.surroundContents(span);
-                    } catch (e) {
-                         // Fallback for selections spanning multiple elements
-                        document.execCommand('styleWithCSS', false, 'true');
-                        const tempFont = `__size${value}`;
-                        document.execCommand('fontName', false, tempFont);
-                        const editorNode = document.querySelector('[contenteditable="true"]');
-                        if (editorNode) {
-                            const fonts = editorNode.querySelectorAll<HTMLElement>(`font[face="${tempFont}"]`);
-                            fonts.forEach(font => {
-                                const replacementSpan = document.createElement('span');
-                                replacementSpan.style.fontSize = `${value}px`;
-                                replacementSpan.innerHTML = font.innerHTML;
-                                font.parentNode?.replaceChild(replacementSpan, font);
-                            });
-                        }
-                    }
-                }
+                range.collapsed ? range.insertNode(span) : range.surroundContents(span);
             }
         }
-        // Trigger an input event to let the editor component know content has changed.
         const editor = document.querySelector('[contenteditable="true"]');
         if (editor) editor.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
     }
@@ -334,52 +322,56 @@ const App: React.FC = () => {
     const a = document.createElement('a');
     a.href = url;
     a.download = `${novel.title.replace(/\s+/g, '_') || 'novel'}.dfn`;
-    document.body.appendChild(a);
     a.click();
-    document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    a.remove();
   }, [novel]);
 
-  const handleUndo = useCallback(() => {
-    if (canUndo) {
-        setHistoryIndex(historyIndex - 1);
-    }
-  }, [canUndo, historyIndex]);
+  const handleUndo = useCallback(() => canUndo && setHistoryIndex(historyIndex - 1), [canUndo, historyIndex]);
+  const handleRedo = useCallback(() => canRedo && setHistoryIndex(historyIndex + 1), [canRedo, historyIndex]);
 
-  const handleRedo = useCallback(() => {
-    if (canRedo) {
-        setHistoryIndex(historyIndex + 1);
-    }
-  }, [canRedo, historyIndex]);
+  // --- Auto-save ---
+  useEffect(() => {
+    setSaveStatus('saving');
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = window.setTimeout(() => {
+        try {
+            localStorage.setItem('dfn-novel-autosave', JSON.stringify(novel));
+            setSaveStatus('saved');
+        } catch (error) { console.error("Failed to save novel:", error); }
+    }, 1000);
+    return () => { if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current); };
+  }, [novel]);
+
+  useEffect(() => {
+      if (saveStatus === 'saved') {
+          const timer = setTimeout(() => setSaveStatus('idle'), 2000);
+          return () => clearTimeout(timer);
+      }
+  }, [saveStatus]);
 
   // --- Context Menu ---
   const handleContextMenu = (event: React.MouseEvent, slideId: string | null) => {
     event.preventDefault();
     setContextMenu({ x: event.clientX, y: event.clientY, slideId, show: true });
   };
-  
   const handleCloseContextMenu = () => setContextMenu({ ...contextMenu, show: false });
-
   const getContextMenuItems = (): ContextMenuItem[] => {
     const { slideId } = contextMenu;
-    if (slideId === null) {
-        return [
-            { label: 'Add Chapter', action: () => handleAddSlide() },
-            { label: 'Paste', action: () => handlePasteSlide(null), disabled: !clipboard || clipboard.extracts === undefined }
-        ];
-    }
+    if (slideId === null) return [
+        { label: 'Add Chapter', action: () => handleAddSlide() },
+        { label: 'Paste', action: () => handlePasteSlide(null), disabled: !clipboard || clipboard.extracts === undefined }
+    ];
     const { slide } = findSlideAndContext(novel, slideId);
     if (!slide) return [];
-    const isChapter = !!slide.extracts;
-    let items: ContextMenuItem[] = isChapter ? [{ label: 'Add Extract', action: () => handleAddSlide(slideId) }] : [];
-    items.push(
+    return [
+      ...(!!slide.extracts ? [{ label: 'Add Extract', action: () => handleAddSlide(slideId) }] : []),
       { label: 'Duplicate', action: () => handleDuplicateSlide(slideId) },
       { label: 'Copy', action: () => handleCopySlide(slideId) },
       { label: 'Cut', action: () => handleCutSlide(slideId) },
       { label: 'Paste', action: () => handlePasteSlide(slideId), disabled: !clipboard },
       { label: 'Delete', action: () => handleDeleteSlide(slideId) }
-    );
-    return items;
+    ];
   };
 
   useEffect(() => {
@@ -393,51 +385,109 @@ const App: React.FC = () => {
     }
   }, []);
 
+  // --- Find & Replace ---
+  const performSearch = useCallback((query: string) => {
+    setSearchQuery(query);
+    if (!query) {
+      setSearchResults([]);
+      setCurrentMatchIndex(-1);
+      return;
+    }
+    const results: SearchResult[] = [];
+    const queryLower = query.toLowerCase();
+    const searchInSlide = (slide: Slide) => {
+      const contentLower = slide.content.toLowerCase();
+      let lastIndex = -1;
+      while ((lastIndex = contentLower.indexOf(queryLower, lastIndex + 1)) !== -1) {
+        results.push({ slideId: slide.id, start: lastIndex, end: lastIndex + query.length });
+      }
+    };
+    novel.slides.forEach(chapter => {
+      searchInSlide(chapter);
+      chapter.extracts?.forEach(extract => searchInSlide(extract));
+    });
+    setSearchResults(results);
+    if (results.length > 0) {
+      setCurrentMatchIndex(0);
+      setActiveSlideId(results[0].slideId);
+    } else {
+      setCurrentMatchIndex(-1);
+    }
+  }, [novel]);
+
+  const navigateMatch = (direction: 'next' | 'prev') => {
+    if (searchResults.length === 0) return;
+    const nextIndex = direction === 'next'
+      ? (currentMatchIndex + 1) % searchResults.length
+      : (currentMatchIndex - 1 + searchResults.length) % searchResults.length;
+    setCurrentMatchIndex(nextIndex);
+    setActiveSlideId(searchResults[nextIndex].slideId);
+  };
+
+  const handleReplace = useCallback((replaceWith: string) => {
+    if (searchResults.length === 0 || currentMatchIndex === -1) return;
+    const match = searchResults[currentMatchIndex];
+    const newNovel = JSON.parse(JSON.stringify(novel));
+    const { slide } = findSlideAndContext(newNovel, match.slideId);
+    if (slide) {
+      slide.content = slide.content.substring(0, match.start) + replaceWith + slide.content.substring(match.end);
+      commitChange(newNovel);
+      // Re-run search after replacing. This resets to the first match, which is a simple and robust behavior.
+      setTimeout(() => performSearch(searchQuery), 50);
+    }
+  }, [novel, searchResults, currentMatchIndex, searchQuery, commitChange, performSearch]);
+
+  const handleReplaceAll = useCallback((find: string, replaceWith: string) => {
+    if (!find) return;
+    const newNovel = JSON.parse(JSON.stringify(novel));
+    const regex = new RegExp(find.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+    const replaceInSlide = (slide: Slide) => { slide.content = slide.content.replace(regex, replaceWith); };
+    newNovel.slides.forEach(chapter => {
+      replaceInSlide(chapter);
+      chapter.extracts?.forEach(extract => replaceInSlide(extract));
+    });
+    commitChange(newNovel);
+    performSearch('');
+    setIsFindOpen(false);
+  }, [novel, commitChange, performSearch]);
+
   // --- Keyboard Shortcuts ---
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
         const isCtrl = event.ctrlKey || event.metaKey;
-        const target = event.target as HTMLElement;
+        if ((event.target as HTMLElement).closest('.z-30')) return; // Ignore keydowns in find panel
+        if ((event.target as HTMLElement).tagName === 'INPUT') return;
 
-        // Don't interfere with text inputs if not a formatting shortcut
-        if (target.tagName === 'INPUT' && !(isCtrl && event.key.toLowerCase() === 's')) {
-             return;
-        }
-        
         if (isCtrl) {
             switch (event.key.toLowerCase()) {
-                case 'z':
-                    event.preventDefault();
-                    if (event.shiftKey) handleRedo(); else handleUndo();
-                    break;
-                case 'y':
-                    event.preventDefault();
-                    handleRedo();
-                    break;
-                case 'b':
-                    event.preventDefault();
-                    handleFormat('bold');
-                    break;
-                case 'i':
-                    event.preventDefault();
-                    handleFormat('italic');
-                    break;
-                case 'u':
-                    event.preventDefault();
-                    handleFormat('underline');
-                    break;
-                case 's':
-                    event.preventDefault();
-                    handleExport();
-                    break;
+                case 'z': event.preventDefault(); event.shiftKey ? handleRedo() : handleUndo(); break;
+                case 'y': event.preventDefault(); handleRedo(); break;
+                case 'b': event.preventDefault(); handleFormat('bold'); break;
+                case 'i': event.preventDefault(); handleFormat('italic'); break;
+                case 'u': event.preventDefault(); handleFormat('underline'); break;
+                case 's': event.preventDefault(); handleExport(); break;
+                case 'f': event.preventDefault(); setIsFindOpen(true); break;
             }
         }
     };
-
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleUndo, handleRedo, handleFormat, handleExport]);
 
+  const wysiwygHighlight = useMemo(() => {
+    if (!isFindOpen || currentMatchIndex === -1 || !searchQuery) return null;
+    const match = searchResults[currentMatchIndex];
+    if (match.slideId !== activeSlideId) return null;
+    const occurrenceIndex = searchResults.slice(0, currentMatchIndex).filter(r => r.slideId === activeSlideId).length;
+    return { query: searchQuery, occurrenceIndex };
+  }, [isFindOpen, currentMatchIndex, searchResults, activeSlideId, searchQuery]);
+
+  const codeHighlightRange = useMemo(() => {
+    if (!isFindOpen || currentMatchIndex === -1) return null;
+    const match = searchResults[currentMatchIndex];
+    if (match.slideId !== activeSlideId) return null;
+    return { start: match.start, end: match.end };
+  }, [isFindOpen, currentMatchIndex, searchResults, activeSlideId]);
 
   return (
     <div className="flex flex-col h-screen bg-black text-white font-sans">
@@ -451,9 +501,10 @@ const App: React.FC = () => {
         onFormat={handleFormat}
         onImport={handleImport}
         onExport={handleExport}
+        onToggleFind={() => setIsFindOpen(!isFindOpen)}
         activeFormats={activeFormats}
       />
-      <main className="flex flex-1 overflow-hidden">
+      <main className="flex flex-1 overflow-hidden relative">
         <SlideNavigator
           novel={novel}
           activeSlideId={activeSlideId}
@@ -470,14 +521,27 @@ const App: React.FC = () => {
           editorRef={editorRef}
           isCodeView={isCodeView}
           onSelectionChange={setActiveFormats}
+          codeHighlightRange={codeHighlightRange}
+          wysiwygHighlight={wysiwygHighlight}
         />
         <PropertiesPanel
           activeSlide={activeSlide}
           onStatusChange={handleStatusChange}
           isOpen={isPropertiesOpen}
         />
+        {isFindOpen && (
+          <FindReplacePanel
+            onFind={performSearch}
+            onNavigate={navigateMatch}
+            onReplace={handleReplace}
+            onReplaceAll={handleReplaceAll}
+            onClose={() => setIsFindOpen(false)}
+            matchIndex={currentMatchIndex}
+            totalMatches={searchResults.length}
+          />
+        )}
       </main>
-      <StatusBar novel={novel} />
+      <StatusBar novel={novel} saveStatus={saveStatus} />
       <ContextMenu
         x={contextMenu.x}
         y={contextMenu.y}
