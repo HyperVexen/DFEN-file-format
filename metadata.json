@@ -1,0 +1,5 @@
+{
+  "name": "DFN Novel Editor",
+  "description": "A PowerPoint-style editor for novel writing using the DFN format. It features a slide-based interface where each slide represents a chapter, enabling intuitive organization and visual management of complex narratives with a minimalist black and white theme.",
+  "requestFramePermissions": []
+}
