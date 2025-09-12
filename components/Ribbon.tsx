@@ -97,13 +97,13 @@ const Ribbon: React.FC<RibbonProps> = ({
 
       {/* Center: Formatting tools */}
       <div className="flex items-center space-x-2 bg-background border border-border-color p-1 rounded-md">
-        <Tooltip content="Bold (Ctrl+B)">
+        <Tooltip content="Bold (Alt+B)">
             <button onClick={() => onFormat('bold')} className={`p-2 rounded-md ${activeFormats.bold ? 'bg-background-active text-text-primary' : 'text-text-secondary hover:bg-background-hover'}`}><BoldIcon /></button>
         </Tooltip>
-        <Tooltip content="Italic (Ctrl+I)">
+        <Tooltip content="Italic (Alt+I)">
             <button onClick={() => onFormat('italic')} className={`p-2 rounded-md ${activeFormats.italic ? 'bg-background-active text-text-primary' : 'text-text-secondary hover:bg-background-hover'}`}><ItalicIcon /></button>
         </Tooltip>
-        <Tooltip content="Underline (Ctrl+U)">
+        <Tooltip content="Underline (Alt+U)">
             <button onClick={() => onFormat('underline')} className={`p-2 rounded-md ${activeFormats.underline ? 'bg-background-active text-text-primary' : 'text-text-secondary hover:bg-background-hover'}`}><UnderlineIcon /></button>
         </Tooltip>
         <Tooltip content="Strikethrough">

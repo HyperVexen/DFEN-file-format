@@ -9,6 +9,11 @@ import StatusBar from './components/StatusBar';
 import ContextMenu, { ContextMenuItem } from './components/ContextMenu';
 import FindReplacePanel from './components/FindReplacePanel';
 import SettingsModal from './components/SettingsModal';
+import { GoogleGenAI } from "@google/genai";
+import { CutIcon, CopyIcon, PasteIcon, TrashIcon, FilePlusIcon, SparklesIcon } from './components/icons';
+
+// --- AI Initialization ---
+const ai = new GoogleGenAI({apiKey: process.env.API_KEY});
 
 // --- Utility Functions ---
 const generateId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
@@ -48,7 +53,12 @@ const novelToDfn = (novel: Novel): string => {
     novel.slides.forEach(chapter => {
         dfnString += `---CHAPTER: ${chapter.title}---\n`;
         dfnString += `[status]${chapter.status}[/status]\n`;
-        dfnString += `${chapter.content}\n\n`;
+        
+        if (!chapter.extracts || chapter.extracts.length === 0) {
+            dfnString += `${chapter.content}\n\n`;
+        } else {
+            dfnString += '\n'; // Add blank line for container chapters
+        }
         
         if (chapter.extracts) {
             chapter.extracts.forEach(extract => {
@@ -59,6 +69,82 @@ const novelToDfn = (novel: Novel): string => {
         }
     });
     return dfnString.trim();
+};
+
+const dfnToNovel = (dfnString: string): Novel => {
+    const novel: Novel = { title: "Untitled Novel", slides: [] };
+    const lines = dfnString.split('\n');
+
+    let currentChapter: Slide | null = null;
+    let currentExtract: Slide | null = null;
+    let currentContent = '';
+
+    const saveCurrentContent = () => {
+        if (currentExtract) {
+            currentExtract.content = currentContent.trim();
+        } else if (currentChapter) {
+            currentChapter.content = currentContent.trim();
+        }
+        currentContent = '';
+    };
+
+    const titleMatch = dfnString.match(/\[title\](.*?)\[\/title\]/);
+    if (titleMatch) {
+        novel.title = titleMatch[1];
+    }
+
+    for (const line of lines) {
+        const chapterMatch = line.match(/^---CHAPTER: (.*?)---$/);
+        if (chapterMatch) {
+            saveCurrentContent();
+            currentExtract = null;
+            currentChapter = {
+                id: generateId('chapter'),
+                title: chapterMatch[1],
+                content: '',
+                status: 'draft',
+                extracts: [],
+            };
+            novel.slides.push(currentChapter);
+            continue;
+        }
+
+        const extractMatch = line.match(/^---EXTRACT: (.*?)---$/);
+        if (extractMatch && currentChapter) {
+            saveCurrentContent();
+            currentExtract = {
+                id: generateId('extract'),
+                title: extractMatch[1],
+                content: '',
+                status: 'draft',
+            };
+            if (!currentChapter.extracts) currentChapter.extracts = [];
+            currentChapter.extracts.push(currentExtract);
+            continue;
+        }
+        
+        const statusMatch = line.match(/^\[status\](.*?)\[\/status\]$/);
+        if (statusMatch) {
+            const status = statusMatch[1] as Slide['status'];
+            if(currentExtract) currentExtract.status = status;
+            else if(currentChapter) currentChapter.status = status;
+            continue;
+        }
+
+        if (line.match(/\[title\].*?\[\/title\]/)) continue;
+
+        currentContent += line + '\n';
+    }
+    saveCurrentContent();
+
+    // Enforce container chapter rule on import
+    novel.slides.forEach(chapter => {
+        if (chapter.extracts && chapter.extracts.length > 0) {
+            chapter.content = '';
+        }
+    });
+
+    return novel;
 };
 
 const loadInitialNovel = (): Novel => {
@@ -99,12 +185,11 @@ const App: React.FC = () => {
   const [activeFormats, setActiveFormats] = useState<{ [key: string]: string | boolean }>({});
   const [clipboard, setClipboard] = useState<Slide | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; slideId: string | null; show: boolean }>({ x: 0, y: 0, slideId: null, show: false });
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>(() => localStorage.getItem('dfn-novel-autosave') ? 'saved' : 'idle');
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'generating' | 'error'>(() => localStorage.getItem('dfn-novel-autosave') ? 'saved' : 'idle');
+  const [statusMessage, setStatusMessage] = useState('');
   
-  // Theme State
   const [theme, setTheme] = useState<string>(() => localStorage.getItem('dfn-theme') || 'minimalist-black');
 
-  // Find & Replace State
   const [isFindOpen, setIsFindOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -161,7 +246,7 @@ const App: React.FC = () => {
     }
   }, [activeSlideId, updateSlide]);
   
-  const handleAddSlide = useCallback((parentId?: string) => {
+  const handleAddSlide = useCallback((parentId?: string, afterSlideId?: string) => {
       const newNovel = JSON.parse(JSON.stringify(novel));
       const isExtract = !!parentId;
       const newSlide: Slide = {
@@ -175,7 +260,21 @@ const App: React.FC = () => {
         const { slide: parentSlide } = findSlideAndContext(newNovel, parentId);
         if (parentSlide) {
           if (!parentSlide.extracts) parentSlide.extracts = [];
-          parentSlide.extracts.push(newSlide);
+          
+          if (parentSlide.extracts.length === 0) {
+            parentSlide.content = ''; // Chapter becomes a container
+          }
+          
+          if (afterSlideId) {
+              const insertIndex = parentSlide.extracts.findIndex(s => s.id === afterSlideId);
+              if (insertIndex !== -1) {
+                  parentSlide.extracts.splice(insertIndex + 1, 0, newSlide);
+              } else {
+                  parentSlide.extracts.push(newSlide);
+              }
+          } else {
+               parentSlide.extracts.push(newSlide);
+          }
         }
       } else {
         newNovel.slides.push(newSlide);
@@ -190,318 +289,454 @@ const App: React.FC = () => {
     if (parentArray && index > -1) {
         parentArray.splice(index, 1);
         if (activeSlideId === slideId) {
-            const nextSlide = newNovel.slides[0]?.extracts?.[0] || newNovel.slides[0] || null;
+            const nextSlide = parentArray[index] || parentArray[index - 1] || newNovel.slides[0]?.extracts?.[0] || newNovel.slides[0] || null;
             setActiveSlideId(nextSlide?.id || null);
         }
+        commitChange(newNovel);
     }
-    commitChange(newNovel);
   }, [novel, activeSlideId, commitChange]);
-  
+
+  const handleCopySlide = useCallback((slideId: string) => {
+    const { slide } = findSlideAndContext(novel, slideId);
+    if (slide) {
+        setClipboard(JSON.parse(JSON.stringify(slide)));
+    }
+  }, [novel]);
+
+  const handleCutSlide = useCallback((slideId: string) => {
+    handleCopySlide(slideId);
+    handleDeleteSlide(slideId);
+  }, [handleCopySlide, handleDeleteSlide]);
+
+  const handlePasteSlide = useCallback((targetId: string | null) => {
+    if (!clipboard) return;
+
+    const newNovel = JSON.parse(JSON.stringify(novel));
+    const newSlide = deepCloneWithNewIds(clipboard);
+
+    if (targetId) {
+        const { parentArray, index, parentChapter } = findSlideAndContext(newNovel, targetId);
+        const targetIsChapter = !parentChapter;
+
+        if (newSlide.extracts) {
+            if (targetIsChapter && parentArray) {
+                parentArray.splice(index + 1, 0, newSlide);
+            } else {
+                newNovel.slides.push(newSlide);
+            }
+        } else {
+            if (targetIsChapter && parentChapter === null) {
+                const targetChapter = parentArray?.[index];
+                if(targetChapter) {
+                    if (!targetChapter.extracts) targetChapter.extracts = [];
+                    targetChapter.extracts.push(newSlide);
+                }
+            } else if (!targetIsChapter && parentArray) {
+                 parentArray.splice(index + 1, 0, newSlide);
+            } else {
+                if (newNovel.slides[0]) {
+                    if (!newNovel.slides[0].extracts) newNovel.slides[0].extracts = [];
+                    newNovel.slides[0].extracts.push(newSlide);
+                }
+            }
+        }
+    } else {
+        if (newSlide.extracts) {
+            newNovel.slides.push(newSlide);
+        } else {
+            if (newNovel.slides.length > 0) {
+                 if (!newNovel.slides[0].extracts) newNovel.slides[0].extracts = [];
+                 newNovel.slides[0].extracts.push(newSlide);
+            }
+        }
+    }
+
+    setActiveSlideId(newSlide.id);
+    commitChange(newNovel);
+  }, [clipboard, novel, commitChange]);
+
   const handleDuplicateSlide = useCallback((slideId: string) => {
     const newNovel = JSON.parse(JSON.stringify(novel));
     const { slide, parentArray, index } = findSlideAndContext(newNovel, slideId);
-    if(slide && parentArray) {
+    if (slide && parentArray && index > -1) {
         const newSlide = deepCloneWithNewIds(slide);
-        newSlide.title = `${slide.title} (Copy)`;
+        newSlide.title = `${newSlide.title} (Copy)`;
         parentArray.splice(index + 1, 0, newSlide);
         setActiveSlideId(newSlide.id);
         commitChange(newNovel);
     }
   }, [novel, commitChange]);
 
-  const handleCopySlide = (slideId: string) => {
-      const { slide } = findSlideAndContext(novel, slideId);
-      if(slide) {
-        setClipboard(JSON.parse(JSON.stringify(slide)));
-      }
-  };
+  const handleSuggestTitle = useCallback(async (slideId: string) => {
+    const { slide } = findSlideAndContext(novel, slideId);
+    if (!slide || !slide.content) return;
 
-  const handleCutSlide = useCallback((slideId: string) => {
-      handleCopySlide(slideId);
-      handleDeleteSlide(slideId);
-  }, [handleDeleteSlide]);
+    setSaveStatus('generating');
+    setStatusMessage('Suggesting title...');
 
-  const handlePasteSlide = useCallback((targetSlideId: string | null) => {
-    if (!clipboard) return;
-    const newNovel = JSON.parse(JSON.stringify(novel));
-    const slideToPaste = deepCloneWithNewIds(clipboard);
-    const isPastingChapter = slideToPaste.extracts !== undefined;
-
-    if (targetSlideId === null) {
-        if (isPastingChapter) {
-            newNovel.slides.push(slideToPaste);
-            setActiveSlideId(slideToPaste.id);
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: `Suggest a short, compelling title for the following text. The title should be 5 words or less. Do not use quotes.
+            
+            TEXT:
+            ---
+            ${slide.content.substring(0, 2000)}
+            ---
+            
+            TITLE:`,
+        });
+        const newTitle = response.text.trim().replace(/"/g, '');
+        if (newTitle) {
+            updateSlide(slideId, { title: newTitle });
         }
-    } else {
-        const { slide: targetSlide, index: targetIndex, parentChapter: targetParentChapter } = findSlideAndContext(newNovel, targetSlideId);
-        if (!targetSlide) return;
-
-        if (isPastingChapter) {
-            const chapterToInsertAfter = targetParentChapter || targetSlide;
-            const chapterIndex = newNovel.slides.findIndex(s => s.id === chapterToInsertAfter.id);
-            if (chapterIndex > -1) {
-                newNovel.slides.splice(chapterIndex + 1, 0, slideToPaste);
-                setActiveSlideId(slideToPaste.id);
-            }
-        } else { 
-            const chapterToInsertInto = targetParentChapter ? targetParentChapter : targetSlide;
-            if (chapterToInsertInto.extracts === undefined) return;
-            if (!chapterToInsertInto.extracts) chapterToInsertInto.extracts = [];
-            const insertIndex = targetParentChapter ? targetIndex + 1 : chapterToInsertInto.extracts.length;
-            chapterToInsertInto.extracts.splice(insertIndex, 0, slideToPaste);
-            setActiveSlideId(slideToPaste.id);
-        }
+        setSaveStatus('idle');
+    } catch (error) {
+        console.error("AI title suggestion failed:", error);
+        setSaveStatus('error');
+        setStatusMessage('AI suggestion failed.');
     }
-    commitChange(newNovel);
-  }, [novel, clipboard, commitChange]);
+  }, [novel, updateSlide]);
 
   const handleReorder = useCallback((draggedId: string, targetId: string, position: 'before' | 'after' | 'inside') => {
-      const newNovel = JSON.parse(JSON.stringify(novel));
-      const { slide: draggedSlide, parentArray: sourceParent, index: sourceIndex } = findSlideAndContext(newNovel, draggedId);
-      if (!draggedSlide || !sourceParent) return;
-      sourceParent.splice(sourceIndex, 1);
-      const { parentArray: targetParent, index: targetIndex, slide: targetSlide } = findSlideAndContext(newNovel, targetId);
-      if (!targetParent || !targetSlide) return;
-      if (position === 'inside' && targetSlide.extracts !== undefined) {
-          if(!targetSlide.extracts) targetSlide.extracts = [];
-          targetSlide.extracts.push(draggedSlide);
-      } else {
-          const insertIndex = position === 'before' ? targetIndex : targetIndex + 1;
-          targetParent.splice(insertIndex, 0, draggedSlide);
-      }
-      commitChange(newNovel);
-  }, [novel, commitChange]);
-    
-  const handleFormat = useCallback((command: string, value?: string) => {
-    if (isCodeView) {
-        if (!editorRef.current || !activeSlideId) return;
-        const textarea = editorRef.current;
-        const start = textarea.selectionStart;
-        const end = textarea.selectionEnd;
-        if (start === end && command !== 'fontSize' && command !== 'foreColor') return;
+    const newNovel = JSON.parse(JSON.stringify(novel));
 
-        const selectedText = textarea.value.substring(start, end);
-        let newText;
+    const { slide: draggedSlide, parentArray: sourceArray, index: sourceIndex } = findSlideAndContext(newNovel, draggedId);
+    if (!draggedSlide || !sourceArray || sourceIndex === -1) return;
+    sourceArray.splice(sourceIndex, 1);
 
-        const commandToTag: { [key: string]: string } = { bold: 'b', italic: 'i', underline: 'u', strikeThrough: 's' };
-        const tag = commandToTag[command];
-
-        if (tag) newText = `[${tag}]${selectedText}[/${tag}]`;
-        else if (command === 'foreColor' && value) newText = `[color=${value}]${selectedText}[/color]`;
-        else if (command === 'fontSize' && value) newText = `[size=${value}]${selectedText}[/size]`;
-        else return;
-
-        const newContent = textarea.value.substring(0, start) + newText + textarea.value.substring(end);
-        updateSlide(activeSlideId, { content: newContent });
-
-        setTimeout(() => {
-            if (editorRef.current) {
-                editorRef.current.focus();
-                const newCursorPos = start === end ? start + newText.indexOf(']') + 1 : start + newText.length;
-                editorRef.current.setSelectionRange(newCursorPos, newCursorPos);
-            }
-        }, 0);
-
-    } else { // WYSIWYG
-        if (['bold', 'italic', 'underline', 'strikeThrough', 'foreColor'].includes(command)) {
-            document.execCommand(command, false, value);
-        } else if (command === 'fontSize' && value) {
-            const selection = window.getSelection();
-            if (selection?.rangeCount) {
-                const range = selection.getRangeAt(0);
-                const span = document.createElement('span');
-                span.style.fontSize = `${value}px`;
-                range.collapsed ? range.insertNode(span) : range.surroundContents(span);
-            }
-        }
-        const editor = document.querySelector('[contenteditable="true"]');
-        if (editor) editor.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+    const { slide: targetSlide, parentArray: targetArray, index: targetIndex } = findSlideAndContext(newNovel, targetId);
+    if (!targetSlide || !targetArray || targetIndex === -1) {
+        sourceArray.splice(sourceIndex, 0, draggedSlide);
+        commitChange(newNovel);
+        return;
     }
-  }, [isCodeView, activeSlideId, updateSlide]);
 
-  const handleImport = () => { /* Placeholder */ };
+    if (position === 'inside') {
+        if (!targetSlide.extracts) targetSlide.extracts = [];
+        if (targetSlide.extracts.length === 0) {
+            targetSlide.content = ''; // Chapter becomes a container
+        }
+        targetSlide.extracts.push(draggedSlide);
+    } else if (position === 'before') {
+        targetArray.splice(targetIndex, 0, draggedSlide);
+    } else if (position === 'after') {
+        targetArray.splice(targetIndex + 1, 0, draggedSlide);
+    }
+    
+    commitChange(newNovel);
+  }, [novel, commitChange]);
+
+  const getContextMenuItems = (slideId: string | null): ContextMenuItem[] => {
+    const { slide, parentChapter } = findSlideAndContext(novel, slideId || '');
+    const isChapter = !!(slide && !parentChapter);
+    const isExtract = !!(slide && parentChapter);
+
+    const slideActions: ContextMenuItem[] = slide ? [
+        { label: 'Suggest Title ✨', action: () => handleSuggestTitle(slide.id), icon: SparklesIcon, disabled: !slide.content },
+        { isSeparator: true },
+        { label: 'Cut', action: () => handleCutSlide(slide.id), icon: CutIcon },
+        { label: 'Copy', action: () => handleCopySlide(slide.id), icon: CopyIcon },
+        { label: 'Duplicate', action: () => handleDuplicateSlide(slide.id), icon: CopyIcon },
+        { label: 'Paste', action: () => handlePasteSlide(slide.id), icon: PasteIcon, disabled: !clipboard },
+        { isSeparator: true },
+        { label: 'Delete', action: () => handleDeleteSlide(slide.id), icon: TrashIcon, isDestructive: true },
+    ] : [];
+
+    if (isChapter) {
+        slideActions.splice(2, 0, { label: 'Add Extract', action: () => handleAddSlide(slide!.id), icon: FilePlusIcon });
+    }
+    
+    if(isExtract) {
+        slideActions.splice(2, 0, { label: 'Add Extract', action: () => handleAddSlide(parentChapter!.id, slide!.id), icon: FilePlusIcon });
+    }
+
+    const generalActions: ContextMenuItem[] = [
+        { label: 'Add Chapter', action: () => handleAddSlide(), icon: FilePlusIcon },
+        { label: 'Paste', action: () => handlePasteSlide(null), icon: PasteIcon, disabled: !clipboard },
+    ];
+    
+    return slide ? slideActions : generalActions;
+  };
+
   const handleExport = useCallback(() => {
-    const content = novelToDfn(novel);
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const dfnContent = novelToDfn(novel);
+    const blob = new Blob([dfnContent], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${novel.title.replace(/\s+/g, '_') || 'novel'}.dfn`;
-    a.click();
+    const link = document.createElement('a');
+    link.href = url;
+    const sanitizedTitle = novel.title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    link.download = `${sanitizedTitle || 'novel'}.dfn`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    a.remove();
   }, [novel]);
+  
+  const handleImport = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.dfn';
+    input.onchange = (e) => {
+        const file = (e.target as HTMLInputElement).files?.[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const content = event.target?.result as string;
+                const newNovel = dfnToNovel(content);
+                commitChange(newNovel);
+                setActiveSlideId(newNovel.slides[0]?.id || null);
+            };
+            reader.readAsText(file);
+        }
+    };
+    input.click();
+  };
 
-  const handleUndo = useCallback(() => canUndo && setHistoryIndex(historyIndex - 1), [canUndo, historyIndex]);
-  const handleRedo = useCallback(() => canRedo && setHistoryIndex(historyIndex + 1), [canRedo, historyIndex]);
+  const handleFormat = useCallback((command: string, value?: string) => {
+    document.execCommand(command, false, value);
+  }, []);
 
-  // --- Auto-save ---
+  const handleUndo = useCallback(() => {
+    if (canUndo) {
+        setHistoryIndex(historyIndex - 1);
+    }
+  }, [canUndo, historyIndex]);
+
+  const handleRedo = useCallback(() => {
+    if (canRedo) {
+        setHistoryIndex(historyIndex + 1);
+    }
+  }, [canRedo, historyIndex]);
+
   useEffect(() => {
-    setSaveStatus('saving');
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    setSaveStatus('saving');
     saveTimeoutRef.current = window.setTimeout(() => {
         try {
             localStorage.setItem('dfn-novel-autosave', JSON.stringify(novel));
             setSaveStatus('saved');
-        } catch (error) { console.error("Failed to save novel:", error); }
-    }, 1000);
-    return () => { if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current); };
+        } catch (error) {
+            console.error("Auto-save failed:", error);
+            setSaveStatus('error');
+            setStatusMessage('Save failed');
+        }
+    }, 1500);
+
+    return () => {
+        if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    };
   }, [novel]);
 
   useEffect(() => {
-      if (saveStatus === 'saved') {
-          const timer = setTimeout(() => setSaveStatus('idle'), 2000);
-          return () => clearTimeout(timer);
-      }
-  }, [saveStatus]);
-  
-  // --- Theme ---
-  useEffect(() => {
-    document.body.dataset.theme = theme;
+    document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('dfn-theme', theme);
   }, [theme]);
 
-  // --- Context Menu ---
-  const handleContextMenu = (event: React.MouseEvent, slideId: string | null) => {
-    event.preventDefault();
-    setContextMenu({ x: event.clientX, y: event.clientY, slideId, show: true });
-  };
-  const handleCloseContextMenu = () => setContextMenu({ ...contextMenu, show: false });
-  const getContextMenuItems = (): ContextMenuItem[] => {
-    const { slideId } = contextMenu;
-    if (slideId === null) return [
-        { label: 'Add Chapter', action: () => handleAddSlide() },
-        { label: 'Paste', action: () => handlePasteSlide(null), disabled: !clipboard || clipboard.extracts === undefined }
-    ];
-    const { slide } = findSlideAndContext(novel, slideId);
-    if (!slide) return [];
-    return [
-      ...(!!slide.extracts ? [{ label: 'Add Extract', action: () => handleAddSlide(slideId) }] : []),
-      { label: 'Duplicate', action: () => handleDuplicateSlide(slideId) },
-      { label: 'Copy', action: () => handleCopySlide(slideId) },
-      { label: 'Cut', action: () => handleCutSlide(slideId) },
-      { label: 'Paste', action: () => handlePasteSlide(slideId), disabled: !clipboard },
-      { label: 'Delete', action: () => handleDeleteSlide(slideId) }
-    ];
-  };
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+    const isCtrlKey = isMac ? e.metaKey : e.ctrlKey;
+    const target = e.target as HTMLElement;
 
-  useEffect(() => {
-    const handleGlobalClick = () => handleCloseContextMenu();
-    const handleEsc = (e: KeyboardEvent) => e.key === 'Escape' && handleCloseContextMenu();
-    window.addEventListener('click', handleGlobalClick);
-    window.addEventListener('keydown', handleEsc);
-    return () => {
-      window.removeEventListener('click', handleGlobalClick);
-      window.removeEventListener('keydown', handleEsc);
-    }
-  }, []);
+    const isEditingText = target.isContentEditable || ['INPUT', 'TEXTAREA'].includes(target.tagName);
+    const isWysiwygEditing = target.isContentEditable;
 
-  // --- Find & Replace ---
-  const performSearch = useCallback((query: string) => {
-    setSearchQuery(query);
-    if (!query) {
-      setSearchResults([]);
-      setCurrentMatchIndex(-1);
-      return;
-    }
-    const results: SearchResult[] = [];
-    const queryLower = query.toLowerCase();
-    const searchInSlide = (slide: Slide) => {
-      const contentLower = slide.content.toLowerCase();
-      let lastIndex = -1;
-      while ((lastIndex = contentLower.indexOf(queryLower, lastIndex + 1)) !== -1) {
-        results.push({ slideId: slide.id, start: lastIndex, end: lastIndex + query.length });
-      }
-    };
-    novel.slides.forEach(chapter => {
-      searchInSlide(chapter);
-      chapter.extracts?.forEach(extract => searchInSlide(extract));
-    });
-    setSearchResults(results);
-    if (results.length > 0) {
-      setCurrentMatchIndex(0);
-      setActiveSlideId(results[0].slideId);
-    } else {
-      setCurrentMatchIndex(-1);
-    }
-  }, [novel]);
 
-  const navigateMatch = (direction: 'next' | 'prev') => {
-    if (searchResults.length === 0) return;
-    const nextIndex = direction === 'next'
-      ? (currentMatchIndex + 1) % searchResults.length
-      : (currentMatchIndex - 1 + searchResults.length) % searchResults.length;
-    setCurrentMatchIndex(nextIndex);
-    setActiveSlideId(searchResults[nextIndex].slideId);
-  };
-
-  const handleReplace = useCallback((replaceWith: string) => {
-    if (searchResults.length === 0 || currentMatchIndex === -1) return;
-    const match = searchResults[currentMatchIndex];
-    const newNovel = JSON.parse(JSON.stringify(novel));
-    const { slide } = findSlideAndContext(newNovel, match.slideId);
-    if (slide) {
-      slide.content = slide.content.substring(0, match.start) + replaceWith + slide.content.substring(match.end);
-      commitChange(newNovel);
-      // Re-run search after replacing. This resets to the first match, which is a simple and robust behavior.
-      setTimeout(() => performSearch(searchQuery), 50);
-    }
-  }, [novel, searchResults, currentMatchIndex, searchQuery, commitChange, performSearch]);
-
-  const handleReplaceAll = useCallback((find: string, replaceWith: string) => {
-    if (!find) return;
-    const newNovel = JSON.parse(JSON.stringify(novel));
-    const regex = new RegExp(find.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
-    const replaceInSlide = (slide: Slide) => { slide.content = slide.content.replace(regex, replaceWith); };
-    newNovel.slides.forEach(chapter => {
-      replaceInSlide(chapter);
-      chapter.extracts?.forEach(extract => replaceInSlide(extract));
-    });
-    commitChange(newNovel);
-    performSearch('');
-    setIsFindOpen(false);
-  }, [novel, commitChange, performSearch]);
-
-  // --- Keyboard Shortcuts ---
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-        const isCtrl = event.ctrlKey || event.metaKey;
-        if ((event.target as HTMLElement).closest('.z-30')) return; // Ignore keydowns in find panel
-        if ((event.target as HTMLElement).tagName === 'INPUT' || (event.target as HTMLElement).tagName === 'SELECT') return;
-
-        if (isCtrl) {
-            switch (event.key.toLowerCase()) {
-                case 'z': event.preventDefault(); event.shiftKey ? handleRedo() : handleUndo(); break;
-                case 'y': event.preventDefault(); handleRedo(); break;
-                case 'b': event.preventDefault(); handleFormat('bold'); break;
-                case 'i': event.preventDefault(); handleFormat('italic'); break;
-                case 'u': event.preventDefault(); handleFormat('underline'); break;
-                case 's': event.preventDefault(); handleExport(); break;
-                case 'f': event.preventDefault(); setIsFindOpen(true); break;
-            }
+    // --- Formatting Shortcuts (only in WYSIWYG editor) ---
+    if (isWysiwygEditing && e.altKey && !isCtrlKey) {
+        let formatted = false;
+        switch (e.key.toLowerCase()) {
+            case 'b':
+                handleFormat('bold');
+                formatted = true;
+                break;
+            case 'i':
+                handleFormat('italic');
+                formatted = true;
+                break;
+            case 'u':
+                handleFormat('underline');
+                formatted = true;
+                break;
         }
-    };
+        if (formatted) {
+            e.preventDefault();
+            return;
+        }
+    }
+    
+    // --- Slide Creation Shortcuts (Global) ---
+    if (e.altKey && !isCtrlKey) {
+        if (e.key.toLowerCase() === 'a') {
+            e.preventDefault();
+            handleAddSlide();
+            return;
+        }
+        if (e.key.toLowerCase() === 'e') {
+            e.preventDefault();
+            if (activeSlideId) {
+                const { slide, parentChapter } = findSlideAndContext(novel, activeSlideId);
+                if (slide && parentChapter) { // It's an extract
+                    handleAddSlide(parentChapter.id, slide.id);
+                } else if (slide && !parentChapter) { // It's a chapter
+                    handleAddSlide(slide.id);
+                }
+            }
+            return;
+        }
+    }
+
+    // --- Global App Shortcuts ---
+    if (isCtrlKey) {
+        switch (e.key.toLowerCase()) {
+            case 'b':
+            case 'i':
+            case 'u':
+                // Prevent default browser formatting to enforce Alt-key shortcuts
+                if (isWysiwygEditing) {
+                    e.preventDefault();
+                }
+                return;
+            case 'z':
+                e.preventDefault();
+                handleUndo();
+                return;
+            case 'y':
+                e.preventDefault();
+                handleRedo();
+                return;
+            case 'f':
+                e.preventDefault();
+                setIsFindOpen(true);
+                return;
+            case 's':
+                e.preventDefault();
+                handleExport();
+                return;
+            // --- Contextual Slide C/C/P ---
+            // Only if not editing text, to allow normal text C/C/P
+            case 'c':
+                if (!isEditingText) {
+                    e.preventDefault();
+                    if(activeSlideId) handleCopySlide(activeSlideId);
+                }
+                return;
+            case 'x':
+                 if (!isEditingText) {
+                    e.preventDefault();
+                    if(activeSlideId) handleCutSlide(activeSlideId);
+                }
+                return;
+            case 'v':
+                 if (!isEditingText) {
+                    e.preventDefault();
+                    handlePasteSlide(activeSlideId);
+                }
+                return;
+        }
+    }
+  }, [
+    activeSlideId, 
+    novel, 
+    handleCopySlide, 
+    handleCutSlide, 
+    handlePasteSlide, 
+    handleAddSlide, 
+    handleExport, 
+    handleUndo, 
+    handleRedo, 
+    handleFormat
+  ]);
+
+  useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleUndo, handleRedo, handleFormat, handleExport]);
+  }, [handleKeyDown]);
+  
+  useEffect(() => {
+    if (!searchQuery) {
+        setSearchResults([]);
+        setCurrentMatchIndex(-1);
+        return;
+    }
+    const results: SearchResult[] = [];
+    const queryLower = searchQuery.toLowerCase();
+    const searchInSlide = (slide: Slide) => {
+        const contentLower = slide.content.toLowerCase();
+        let startIndex = 0;
+        let index;
+        while ((index = contentLower.indexOf(queryLower, startIndex)) > -1) {
+            results.push({ slideId: slide.id, start: index, end: index + searchQuery.length });
+            startIndex = index + 1;
+        }
+    };
+    novel.slides.forEach(chapter => {
+        searchInSlide(chapter);
+        chapter.extracts?.forEach(extract => searchInSlide(extract));
+    });
+    setSearchResults(results);
+    setCurrentMatchIndex(results.length > 0 ? 0 : -1);
+  }, [searchQuery, novel]);
 
-  const wysiwygHighlight = useMemo(() => {
-    if (!isFindOpen || currentMatchIndex === -1 || !searchQuery) return null;
+  useEffect(() => {
+    if (currentMatchIndex !== -1 && searchResults[currentMatchIndex]) {
+        setActiveSlideId(searchResults[currentMatchIndex].slideId);
+    }
+  }, [currentMatchIndex, searchResults]);
+
+  const handleFindNavigate = (direction: 'next' | 'prev') => {
+    if (searchResults.length === 0) return;
+    let nextIndex = direction === 'next'
+        ? (currentMatchIndex + 1) % searchResults.length
+        : (currentMatchIndex - 1 + searchResults.length) % searchResults.length;
+    setCurrentMatchIndex(nextIndex);
+  };
+  
+  const handleReplace = (replaceWith: string) => {
+     if (currentMatchIndex === -1 || !activeSlide) return;
+    const newNovel = JSON.parse(JSON.stringify(novel));
+    const { slide } = findSlideAndContext(newNovel, activeSlide.id);
     const match = searchResults[currentMatchIndex];
-    if (match.slideId !== activeSlideId) return null;
-    const occurrenceIndex = searchResults.slice(0, currentMatchIndex).filter(r => r.slideId === activeSlideId).length;
-    return { query: searchQuery, occurrenceIndex };
-  }, [isFindOpen, currentMatchIndex, searchResults, activeSlideId, searchQuery]);
+    if (!slide || slide.id !== match.slideId) return;
+
+    slide.content = slide.content.substring(0, match.start) + replaceWith + slide.content.substring(match.end);
+    commitChange(newNovel);
+    setSearchQuery(searchQuery); 
+  };
+  
+  const handleReplaceAll = (find: string, replaceWith: string) => {
+    if (!find) return;
+    const newNovel = JSON.parse(JSON.stringify(novel));
+    const regex = new RegExp(find.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'gi');
+    
+    newNovel.slides.forEach((chapter: Slide) => {
+        chapter.content = chapter.content.replace(regex, replaceWith);
+        chapter.extracts?.forEach((extract: Slide) => {
+            extract.content = extract.content.replace(regex, replaceWith);
+        });
+    });
+    commitChange(newNovel);
+  };
 
   const codeHighlightRange = useMemo(() => {
-    if (!isFindOpen || currentMatchIndex === -1) return null;
-    const match = searchResults[currentMatchIndex];
-    if (match.slideId !== activeSlideId) return null;
-    return { start: match.start, end: match.end };
-  }, [isFindOpen, currentMatchIndex, searchResults, activeSlideId]);
+    if (isCodeView && currentMatchIndex !== -1 && searchResults[currentMatchIndex]?.slideId === activeSlideId) {
+        return { start: searchResults[currentMatchIndex].start, end: searchResults[currentMatchIndex].end };
+    }
+    return null;
+  }, [isCodeView, currentMatchIndex, searchResults, activeSlideId]);
+  
+  const wysiwygHighlight = useMemo(() => {
+      if (!isCodeView && searchQuery && searchResults.length > 0 && currentMatchIndex !== -1 && searchResults[currentMatchIndex]?.slideId === activeSlideId) {
+          const currentGlobalMatch = searchResults[currentMatchIndex];
+          const occurrencesInSlide = searchResults.filter(r => r.slideId === activeSlideId);
+          const occurrenceIndex = occurrencesInSlide.findIndex(r => r.start === currentGlobalMatch.start);
+          return { query: searchQuery, occurrenceIndex };
+      }
+      return null;
+  }, [isCodeView, searchQuery, searchResults, currentMatchIndex, activeSlideId]);
 
   return (
-    <div className="flex flex-col h-screen bg-background text-text-primary font-sans">
+    <div className="h-screen w-screen flex flex-col bg-background" onClick={() => contextMenu.show && setContextMenu({ ...contextMenu, show: false })}>
       <Ribbon
         isNavOpen={isNavOpen}
         onToggleNav={() => setIsNavOpen(!isNavOpen)}
@@ -515,7 +750,7 @@ const App: React.FC = () => {
         onToggleFind={() => setIsFindOpen(!isFindOpen)}
         activeFormats={activeFormats}
       />
-      <main className="flex flex-1 overflow-hidden relative">
+      <main className="flex-1 flex overflow-hidden">
         <SlideNavigator
           novel={novel}
           activeSlideId={activeSlideId}
@@ -523,7 +758,11 @@ const App: React.FC = () => {
           onAddSlide={handleAddSlide}
           onReorder={handleReorder}
           isOpen={isNavOpen}
-          onContextMenu={handleContextMenu}
+          onContextMenu={(e, slideId) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setContextMenu({ x: e.clientX, y: e.clientY, slideId, show: true });
+          }}
           onOpenSettings={() => setIsSettingsOpen(true)}
         />
         <EditorPanel
@@ -541,28 +780,26 @@ const App: React.FC = () => {
           onStatusChange={handleStatusChange}
           isOpen={isPropertiesOpen}
         />
-        {isFindOpen && (
-          <FindReplacePanel
-            onFind={performSearch}
-            onNavigate={navigateMatch}
-            onReplace={handleReplace}
-            onReplaceAll={handleReplaceAll}
-            onClose={() => setIsFindOpen(false)}
-            matchIndex={currentMatchIndex}
-            totalMatches={searchResults.length}
-          />
-        )}
       </main>
-      <StatusBar novel={novel} saveStatus={saveStatus} />
+      <StatusBar novel={novel} saveStatus={saveStatus} statusMessage={statusMessage} />
       <ContextMenu
-        x={contextMenu.x}
-        y={contextMenu.y}
-        show={contextMenu.show}
-        items={getContextMenuItems()}
-        onClose={handleCloseContextMenu}
+        {...contextMenu}
+        items={getContextMenuItems(contextMenu.slideId)}
+        onClose={() => setContextMenu({ ...contextMenu, show: false })}
       />
+      {isFindOpen && (
+        <FindReplacePanel 
+          onFind={setSearchQuery}
+          onNavigate={handleFindNavigate}
+          onReplace={handleReplace}
+          onReplaceAll={handleReplaceAll}
+          onClose={() => setIsFindOpen(false)}
+          matchIndex={currentMatchIndex}
+          totalMatches={searchResults.length}
+        />
+      )}
       <SettingsModal 
-        isOpen={isSettingsOpen} 
+        isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         theme={theme}
         onThemeChange={setTheme}

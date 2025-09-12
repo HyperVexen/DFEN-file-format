@@ -1,12 +1,14 @@
 import React from 'react';
 import type { Novel } from '../types';
+import { CheckIcon, LoaderIcon, AlertTriangleIcon } from './icons';
 
 interface StatusBarProps {
     novel: Novel;
-    saveStatus: 'idle' | 'saving' | 'saved';
+    saveStatus: 'idle' | 'saving' | 'saved' | 'generating' | 'error';
+    statusMessage?: string;
 }
 
-const StatusBar: React.FC<StatusBarProps> = ({ novel, saveStatus }) => {
+const StatusBar: React.FC<StatusBarProps> = ({ novel, saveStatus, statusMessage }) => {
     const totalChapters = novel.slides.length;
     const totalWordCount = novel.slides.reduce((acc, chapter) => {
         const chapterWords = chapter.content.split(/\s+/).filter(Boolean).length;
@@ -15,15 +17,34 @@ const StatusBar: React.FC<StatusBarProps> = ({ novel, saveStatus }) => {
         return acc + chapterWords + extractsWords;
     }, 0);
 
-    const getStatusText = () => {
+    const renderStatus = () => {
         switch (saveStatus) {
             case 'saving':
-                return 'Saving...';
+                return <span>Saving...</span>;
             case 'saved':
-                return 'All changes saved';
+                return (
+                    <div className="flex items-center text-green-500 font-medium">
+                        <CheckIcon className="w-3.5 h-3.5 mr-1" />
+                        <span>All changes saved</span>
+                    </div>
+                );
+            case 'generating':
+                return (
+                    <div className="flex items-center">
+                        <LoaderIcon className="w-3.5 h-3.5 mr-1 animate-spin" />
+                        <span>{statusMessage || 'Generating...'}</span>
+                    </div>
+                );
+            case 'error':
+                 return (
+                    <div className="flex items-center text-red-500 font-medium">
+                        <AlertTriangleIcon className="w-3.5 h-3.5 mr-1" />
+                        <span>{statusMessage || 'An error occurred'}</span>
+                    </div>
+                );
             case 'idle':
             default:
-                return '';
+                return null;
         }
     };
 
@@ -34,9 +55,9 @@ const StatusBar: React.FC<StatusBarProps> = ({ novel, saveStatus }) => {
         <span>Total Words: {totalWordCount}</span>
       </div>
       <div className="flex items-center space-x-4">
-        <span className="transition-opacity duration-300 min-w-[120px] text-right">
-            {getStatusText()}
-        </span>
+        <div className="transition-opacity duration-300 min-w-[150px] text-right flex items-center justify-end">
+          {renderStatus()}
+        </div>
         <span>DFN Editor v1.0</span>
       </div>
     </div>

@@ -141,28 +141,40 @@ const SlideNavigator: React.FC<SlideNavigatorProps> = ({ novel, activeSlideId, o
         const y = e.clientY - rect.top;
         const height = rect.height;
 
-        let newPos: 'before' | 'after' | 'inside' = 'after';
-
         const draggedType = findSlideType(draggedId);
         const targetType = findSlideType(targetId);
+        
+        let newPos: 'before' | 'after' | 'inside' | null;
 
+        // Determine initial position based on y-coordinate
         if (draggedType === 'extract' && targetType === 'chapter') {
+            // When dragging an extract over a chapter, allow 'inside'
             if (y < height * 0.25) newPos = 'before';
             else if (y > height * 0.75) newPos = 'after';
             else newPos = 'inside';
         } else {
-             if (y < height * 0.5) newPos = 'before';
-             else newPos = 'after';
+            // For all other combinations, it's just top half or bottom half
+            if (y < height / 2) newPos = 'before';
+            else newPos = 'after';
+        }
+
+        // --- Apply Rules to invalidate or change drop position ---
+
+        // RULE 1: A Chapter can NEVER be dropped inside another element.
+        if (draggedType === 'chapter' && newPos === 'inside') {
+            newPos = 'after'; // Correct it to 'after'
+        }
+
+        // RULE 2: Nothing can be dropped inside an Extract.
+        if (targetType === 'extract' && newPos === 'inside') {
+             newPos = 'after'; // Correct it to 'after'
+        }
+
+        // RULE 3: A Chapter cannot be dropped next to an Extract (it must be dropped next to another Chapter).
+        if (draggedType === 'chapter' && targetType === 'extract') {
+            newPos = null; // Invalidate the drop
         }
         
-        if (draggedType === 'chapter' && newPos === 'inside') {
-            newPos = 'after';
-        }
-
-        if (targetType === 'extract' && newPos === 'inside') {
-            newPos = 'after';
-        }
-
         setDragOverId(targetId);
         setDropPosition(newPos);
     };

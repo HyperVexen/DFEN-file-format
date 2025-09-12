@@ -56,11 +56,16 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, theme, o
             <div>
                 <h3 className="text-lg font-semibold mb-2 text-text-primary">Keyboard Shortcuts</h3>
                 <div className="text-sm max-h-60 overflow-y-auto pr-2">
-                    <Shortcut action="Bold" keys="Ctrl/Cmd + B" />
-                    <Shortcut action="Italic" keys="Ctrl/Cmd + I" />
-                    <Shortcut action="Underline" keys="Ctrl/Cmd + U" />
+                    <Shortcut action="Copy Slide" keys="Ctrl/Cmd + C" />
+                    <Shortcut action="Cut Slide" keys="Ctrl/Cmd + X" />
+                    <Shortcut action="Paste Slide" keys="Ctrl/Cmd + V" />
                     <Shortcut action="Undo" keys="Ctrl/Cmd + Z" />
                     <Shortcut action="Redo" keys="Ctrl/Cmd + Y" />
+                    <Shortcut action="Add Chapter" keys="Alt + A" />
+                    <Shortcut action="Add Extract" keys="Alt + E" />
+                    <Shortcut action="Bold" keys="Alt + B" />
+                    <Shortcut action="Italic" keys="Alt + I" />
+                    <Shortcut action="Underline" keys="Alt + U" />
                     <Shortcut action="Find & Replace" keys="Ctrl/Cmd + F" />
                     <Shortcut action="Export Novel" keys="Ctrl/Cmd + S" />
                     <Shortcut action="Next Match" keys="Enter (in Find)" />
