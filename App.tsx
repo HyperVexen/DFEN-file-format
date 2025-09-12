@@ -8,6 +8,7 @@ import PropertiesPanel from './components/PropertiesPanel';
 import StatusBar from './components/StatusBar';
 import ContextMenu, { ContextMenuItem } from './components/ContextMenu';
 import FindReplacePanel from './components/FindReplacePanel';
+import SettingsModal from './components/SettingsModal';
 
 // --- Utility Functions ---
 const generateId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
@@ -100,8 +101,12 @@ const App: React.FC = () => {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; slideId: string | null; show: boolean }>({ x: 0, y: 0, slideId: null, show: false });
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>(() => localStorage.getItem('dfn-novel-autosave') ? 'saved' : 'idle');
   
+  // Theme State
+  const [theme, setTheme] = useState<string>(() => localStorage.getItem('dfn-theme') || 'minimalist-black');
+
   // Find & Replace State
   const [isFindOpen, setIsFindOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [currentMatchIndex, setCurrentMatchIndex] = useState(-1);
@@ -349,6 +354,12 @@ const App: React.FC = () => {
           return () => clearTimeout(timer);
       }
   }, [saveStatus]);
+  
+  // --- Theme ---
+  useEffect(() => {
+    document.body.dataset.theme = theme;
+    localStorage.setItem('dfn-theme', theme);
+  }, [theme]);
 
   // --- Context Menu ---
   const handleContextMenu = (event: React.MouseEvent, slideId: string | null) => {
@@ -456,7 +467,7 @@ const App: React.FC = () => {
     const handleKeyDown = (event: KeyboardEvent) => {
         const isCtrl = event.ctrlKey || event.metaKey;
         if ((event.target as HTMLElement).closest('.z-30')) return; // Ignore keydowns in find panel
-        if ((event.target as HTMLElement).tagName === 'INPUT') return;
+        if ((event.target as HTMLElement).tagName === 'INPUT' || (event.target as HTMLElement).tagName === 'SELECT') return;
 
         if (isCtrl) {
             switch (event.key.toLowerCase()) {
@@ -490,7 +501,7 @@ const App: React.FC = () => {
   }, [isFindOpen, currentMatchIndex, searchResults, activeSlideId]);
 
   return (
-    <div className="flex flex-col h-screen bg-black text-white font-sans">
+    <div className="flex flex-col h-screen bg-background text-text-primary font-sans">
       <Ribbon
         isNavOpen={isNavOpen}
         onToggleNav={() => setIsNavOpen(!isNavOpen)}
@@ -513,6 +524,7 @@ const App: React.FC = () => {
           onReorder={handleReorder}
           isOpen={isNavOpen}
           onContextMenu={handleContextMenu}
+          onOpenSettings={() => setIsSettingsOpen(true)}
         />
         <EditorPanel
           activeSlide={activeSlide}
@@ -548,6 +560,12 @@ const App: React.FC = () => {
         show={contextMenu.show}
         items={getContextMenuItems()}
         onClose={handleCloseContextMenu}
+      />
+      <SettingsModal 
+        isOpen={isSettingsOpen} 
+        onClose={() => setIsSettingsOpen(false)}
+        theme={theme}
+        onThemeChange={setTheme}
       />
     </div>
   );

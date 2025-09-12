@@ -52,27 +52,27 @@ const EditorPanel: React.FC<EditorPanelProps> = ({
 
   if (!activeSlide) {
     return (
-      <div className="flex-1 flex items-center justify-center text-white/50 p-8">
+      <div className="flex-1 flex items-center justify-center text-text-disabled p-8">
         Select a chapter or extract to begin editing.
       </div>
     );
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-black overflow-y-auto">
-        <div className="bg-black p-4 sm:p-6 md:p-8 flex flex-col min-h-full w-full">
+    <div className="flex-1 flex flex-col bg-background overflow-y-auto">
+        <div className="bg-background p-4 sm:p-6 md:p-8 flex flex-col min-h-full w-full">
             <input 
                 type="text"
                 value={activeSlide.title}
                 onChange={(e) => onTitleChange(e.target.value)}
-                className="text-2xl font-bold bg-transparent border-b-2 border-white/30 focus:border-white focus:outline-none pb-2 mb-4 text-white"
+                className="text-2xl font-bold bg-transparent border-b-2 border-border-color focus:border-text-primary focus:outline-none pb-2 mb-4 text-text-primary"
             />
             {isCodeView ? (
                 <textarea
                     ref={editorRef}
                     value={activeSlide.content}
                     onChange={(e) => onContentChange(e.target.value)}
-                    className="flex-1 bg-transparent w-full resize-none focus:outline-none text-white/90 leading-relaxed font-mono text-sm"
+                    className="flex-1 bg-transparent w-full resize-none focus:outline-none text-text-secondary leading-relaxed font-mono text-sm"
                     placeholder="Start writing..."
                 />
             ) : (

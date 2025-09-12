@@ -28,7 +28,7 @@ const dfnToHtml = (text: string): string => {
                 case 'sup': result += `<sup>${innerHtml}</sup>`; break;
                 case 'font': result += `<span style="font-family: ${value};">${innerHtml}</span>`; break;
                 case 'color': result += `<span style="color: ${value};">${innerHtml}</span>`; break;
-                case 'bg': result += `<span style="background-color: ${value}; color: ${value === 'white' ? 'black' : 'white'}; padding: 0 2px;">${innerHtml}</span>`; break;
+                case 'bg': result += `<span style="background-color: ${value};">${innerHtml}</span>`; break;
                 case 'size': result += `<span style="font-size: ${value}px;">${innerHtml}</span>`; break;
                 default: result += innerHtml;
             }
@@ -127,10 +127,11 @@ const WysiwygEditor: React.FC<WysiwygEditorProps> = ({ dfnContent, onDfnContentC
 
         let node = window.getSelection()?.anchorNode;
         if (node) {
+            const editorColor = window.getComputedStyle(editorRef.current).color;
             let element = node.nodeType === Node.TEXT_NODE ? node.parentElement : node as HTMLElement;
             while (element && editorRef.current.contains(element)) {
                 const style = window.getComputedStyle(element);
-                if (!formats.color && style.color && style.color !== 'rgb(255, 255, 255)') {
+                if (!formats.color && style.color && style.color !== editorColor) {
                     formats.color = style.color;
                 }
                 if (!formats.fontSize && style.fontSize && element.nodeName === 'SPAN') {
@@ -262,7 +263,7 @@ const WysiwygEditor: React.FC<WysiwygEditorProps> = ({ dfnContent, onDfnContentC
             contentEditable
             onInput={handleInput}
             onBlur={handleInput}
-            className="flex-1 w-full focus:outline-none text-white leading-relaxed whitespace-pre-wrap"
+            className="flex-1 w-full focus:outline-none text-text-primary leading-relaxed whitespace-pre-wrap"
         />
     );
 };

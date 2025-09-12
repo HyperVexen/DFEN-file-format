@@ -19,7 +19,7 @@ const Tooltip: React.FC<TooltipProps> = ({ content, children, position = 'bottom
       {children}
       <div
         className={`
-          absolute whitespace-nowrap bg-white text-black text-xs rounded py-1 px-2
+          absolute whitespace-nowrap bg-popup-background text-popup-text text-xs rounded py-1 px-2
           opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none z-50
           ${positionClasses[position]}
         `}

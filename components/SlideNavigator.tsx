@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import type { Novel, Slide } from '../types';
 import Tooltip from './Tooltip';
-import { AddIcon, ChevronRightIcon } from './icons';
+import { AddIcon, ChevronRightIcon, SettingsIcon } from './icons';
 
 interface SlideNavigatorProps {
   novel: Novel;
@@ -11,6 +11,7 @@ interface SlideNavigatorProps {
   onReorder: (draggedId: string, targetId: string, position: 'before' | 'after' | 'inside') => void;
   isOpen: boolean;
   onContextMenu: (event: React.MouseEvent, slideId: string | null) => void;
+  onOpenSettings: () => void;
 }
 
 const StatusIndicator: React.FC<{ status: Slide['status'] }> = ({ status }) => {
@@ -69,7 +70,7 @@ const SlideItem: React.FC<{
                 <div className={`absolute left-0 bottom-0 h-[3px] w-full ${dropTargetClass('after')}`}></div>
 
                 {isChapter && slide.extracts && slide.extracts.length > 0 && (
-                    <button onClick={() => setIsExpanded(!isExpanded)} className="p-0.5 rounded-full hover:bg-white/10 mr-1 flex-shrink-0">
+                    <button onClick={() => setIsExpanded(!isExpanded)} className="p-0.5 rounded-full hover:bg-background-hover mr-1 flex-shrink-0">
                         <ChevronRightIcon open={isExpanded} className="w-4 h-4" />
                     </button>
                 )}
@@ -79,7 +80,7 @@ const SlideItem: React.FC<{
                     onClick={() => onSelectSlide(slide.id)}
                     className={`
                         flex-1 py-1 px-2 rounded-md truncate text-left flex items-center space-x-2
-                        ${isActive ? 'bg-white/20 text-white' : 'text-white/80 hover:bg-white/10'}
+                        ${isActive ? 'bg-background-active text-text-primary' : 'text-text-secondary hover:bg-background-hover'}
                         ${dropTargetClass('inside')}
                     `}
                 >
@@ -111,7 +112,7 @@ const SlideItem: React.FC<{
     );
 };
 
-const SlideNavigator: React.FC<SlideNavigatorProps> = ({ novel, activeSlideId, onSelectSlide, onAddSlide, onReorder, isOpen, onContextMenu }) => {
+const SlideNavigator: React.FC<SlideNavigatorProps> = ({ novel, activeSlideId, onSelectSlide, onAddSlide, onReorder, isOpen, onContextMenu, onOpenSettings }) => {
     const [draggedId, setDraggedId] = useState<string | null>(null);
     const [dragOverId, setDragOverId] = useState<string | null>(null);
     const [dropPosition, setDropPosition] = useState<'before' | 'after' | 'inside' | null>(null);
@@ -187,24 +188,24 @@ const SlideNavigator: React.FC<SlideNavigatorProps> = ({ novel, activeSlideId, o
         <aside
             ref={navRef}
             className={`
-                bg-black shrink-0 text-white
+                bg-background shrink-0 text-text-primary flex flex-col
                 transition-all duration-300 ease-in-out
-                ${isOpen ? 'w-72 p-2 border-r border-white/20' : 'w-0 p-0 border-r-0 overflow-hidden'}
+                ${isOpen ? 'w-72 p-2 border-r border-border-color' : 'w-0 p-0 border-r-0 overflow-hidden'}
             `}
             onDragLeave={handleDragLeave}
             onContextMenu={(e) => { e.preventDefault(); onContextMenu(e, null) }}
             aria-hidden={!isOpen}
         >
-          <div className="flex justify-between items-center mb-2 w-64 overflow-hidden">
-              <h2 className="text-sm font-semibold uppercase tracking-wider text-white/70">Navigator</h2>
+          <div className="flex justify-between items-center mb-2 w-64 overflow-hidden shrink-0">
+              <h2 className="text-sm font-semibold uppercase tracking-wider text-text-tertiary">Navigator</h2>
               <Tooltip content="Add Chapter">
-                  <button onClick={() => onAddSlide()} className="p-1 text-white/70 hover:text-white hover:bg-white/10 rounded-md">
+                  <button onClick={() => onAddSlide()} className="p-1 text-text-tertiary hover:text-text-primary hover:bg-background-hover rounded-md">
                       <AddIcon className="w-5 h-5" />
                   </button>
               </Tooltip>
           </div>
           <div 
-            className="flex flex-col space-y-1 overflow-hidden"
+            className="flex-1 flex flex-col space-y-1 overflow-y-auto overflow-x-hidden"
             onDrop={(e) => handleDrop(e, novel.slides[novel.slides.length-1].id)}
             onDragOver={(e) => e.preventDefault()}
           >
@@ -224,6 +225,14 @@ const SlideNavigator: React.FC<SlideNavigatorProps> = ({ novel, activeSlideId, o
                       dropPosition={dropPosition}
                   />
               ))}
+          </div>
+          <div className="mt-2 pt-2 border-t border-border-color shrink-0">
+             <Tooltip content="Settings" position="top">
+                  <button onClick={onOpenSettings} className="w-full flex items-center space-x-2 p-1 text-text-tertiary hover:text-text-primary hover:bg-background-hover rounded-md">
+                      <SettingsIcon className="w-5 h-5" />
+                      <span className="text-sm">Settings</span>
+                  </button>
+              </Tooltip>
           </div>
         </aside>
     );

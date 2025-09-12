@@ -1,5 +1,3 @@
-
-
 import React from 'react';
 import type { Novel } from '../types';
 
@@ -30,7 +28,7 @@ const StatusBar: React.FC<StatusBarProps> = ({ novel, saveStatus }) => {
     };
 
   return (
-    <div className="bg-black border-t border-white/20 px-4 py-1 flex justify-between items-center text-xs text-white/70">
+    <div className="bg-background border-t border-border-color px-4 py-1 flex justify-between items-center text-xs text-text-tertiary">
       <div className="flex space-x-4">
         <span>Chapters: {totalChapters}</span>
         <span>Total Words: {totalWordCount}</span>
