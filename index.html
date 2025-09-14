@@ -56,6 +56,16 @@
           --color-popup-text: #0d0221;
         }
       }
+      mark {
+        background-color: rgba(255, 255, 0, 0.4);
+        color: inherit;
+        border-radius: 2px;
+        padding: 0 1px;
+      }
+      mark.current-match {
+        background-color: rgba(255, 165, 0, 0.6);
+        box-shadow: 0 0 0 1px rgba(255, 165, 0, 0.8);
+      }
     </style>
     <script>
       tailwind.config = {

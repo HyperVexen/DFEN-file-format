@@ -193,55 +193,58 @@ const WysiwygEditor: React.FC<WysiwygEditorProps> = ({ dfnContent, onDfnContentC
     useEffect(() => {
         removeHighlights();
         if (!highlightInfo || !editorRef.current) return;
-        
+
         const { query, occurrenceIndex } = highlightInfo;
-        const walker = document.createTreeWalker(editorRef.current, NodeFilter.SHOW_TEXT, null);
-        let currentNode;
-        let textContent = '';
-        const textNodes: {node: Node, start: number}[] = [];
+        const editor = editorRef.current;
 
-        while(currentNode = walker.nextNode()) {
-            textNodes.push({node: currentNode, start: textContent.length});
-            textContent += currentNode.textContent || '';
-        }
-        
-        const queryLower = query.toLowerCase();
-        const contentLower = textContent.toLowerCase();
-        let matchIndex = -1;
-        let currentOccurrence = -1;
-        
-        do {
-            matchIndex = contentLower.indexOf(queryLower, matchIndex + 1);
-            if (matchIndex !== -1) {
-                currentOccurrence++;
-            }
-        } while (currentOccurrence < occurrenceIndex && matchIndex !== -1)
-        
-        if (matchIndex === -1) return;
-        
-        const matchEnd = matchIndex + query.length;
-        const range = document.createRange();
-        let started = false;
-        
-        for (const { node, start } of textNodes) {
-            const end = start + (node.textContent?.length || 0);
-            if (matchEnd > start && matchIndex < end) {
-                const rangeStart = Math.max(start, matchIndex);
-                const rangeEnd = Math.min(end, matchEnd);
+        if (!query) return;
 
-                if (!started) {
-                    range.setStart(node, rangeStart - start);
-                    started = true;
+        const regex = new RegExp(query.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'gi');
+        let matchCount = -1;
+        let currentMatchElement: HTMLElement | null = null;
+
+        const highlightRecursive = (node: Node) => {
+            if (node.nodeType === Node.TEXT_NODE) {
+                const text = node.textContent;
+                if (text && node.parentNode?.nodeName !== 'MARK') {
+                    const fragment = document.createDocumentFragment();
+                    let lastIndex = 0;
+                    let match;
+                    
+                    regex.lastIndex = 0; // Reset regex state
+                    while ((match = regex.exec(text)) !== null) {
+                        if (match.index > lastIndex) {
+                            fragment.appendChild(document.createTextNode(text.substring(lastIndex, match.index)));
+                        }
+                        
+                        const mark = document.createElement(HIGHLIGHT_TAG);
+                        mark.textContent = match[0];
+                        matchCount++;
+                        if (matchCount === occurrenceIndex) {
+                            mark.classList.add('current-match');
+                            currentMatchElement = mark;
+                        }
+                        fragment.appendChild(mark);
+                        lastIndex = regex.lastIndex;
+                    }
+
+                    if (lastIndex < text.length) {
+                        fragment.appendChild(document.createTextNode(text.substring(lastIndex)));
+                    }
+
+                    if (fragment.hasChildNodes()) {
+                        node.parentNode?.replaceChild(fragment, node);
+                    }
                 }
-                
-                if (rangeEnd <= end) {
-                    range.setEnd(node, rangeEnd - start);
-                    const mark = document.createElement(HIGHLIGHT_TAG);
-                    range.surroundContents(mark);
-                    mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    break;
-                }
+            } else if (node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).nodeName !== HIGHLIGHT_TAG) {
+                Array.from(node.childNodes).forEach(highlightRecursive);
             }
+        };
+
+        highlightRecursive(editor);
+
+        if (currentMatchElement) {
+            currentMatchElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
     }, [highlightInfo, removeHighlights, dfnContent]);
 
