@@ -198,3 +198,33 @@ export const LoaderIcon: React.FC<{ className?: string }> = ({ className }) => (
         <line x1="16.24" y1="7.76" x2="19.07" y2="4.93" />
     </SVGIcon>
 );
+
+export const PaletteIcon: React.FC<{ className?: string }> = ({ className }) => (
+    <SVGIcon className={className}>
+        <path d="M12 3a9 9 0 0 0-9 9 9 9 0 0 0 7.5 8.84 9 9 0 0 0 1.5-.17 9 9 0 0 0 8.84-7.5 9 9 0 0 0-.17-1.5A9 9 0 0 0 12 3z"/>
+        <circle cx="12" cy="12" r="3"/>
+        <circle cx="16" cy="7" r="1"/>
+        <circle cx="7" cy="16" r="1"/>
+        <circle cx="8" cy="8" r="1"/>
+    </SVGIcon>
+);
+
+export const KeyboardIcon: React.FC<{ className?: string }> = ({ className }) => (
+    <SVGIcon className={className}>
+        <rect x="3" y="4" width="18" height="16" rx="2" ry="2"/>
+        <line x1="7" y1="9" x2="7.01" y2="9"/>
+        <line x1="11" y1="9" x2="11.01" y2="9"/>
+        <line x1="15" y1="9" x2="15.01" y2="9"/>
+        <line x1="7" y1="13" x2="7.01" y2="13"/>
+        <line x1="11" y1="13" x2="11.01" y2="13"/>
+        <line x1="15" y1="13" x2="15.01" y2="13"/>
+        <line x1="9" y1="17" x2="15" y2="17"/>
+    </SVGIcon>
+);
+
+export const BookOpenIcon: React.FC<{ className?: string }> = ({ className }) => (
+    <SVGIcon className={className}>
+        <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+        <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+    </SVGIcon>
+);
